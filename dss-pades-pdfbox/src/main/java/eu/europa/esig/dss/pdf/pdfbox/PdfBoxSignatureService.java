@@ -49,6 +49,7 @@ import eu.europa.esig.dss.utils.Utils;
 import eu.europa.esig.dss.validation.AdvancedSignature;
 import eu.europa.esig.dss.validation.ValidationData;
 import eu.europa.esig.dss.validation.timestamp.TimestampToken;
+import java.util.HashSet;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
@@ -204,12 +205,17 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 
 			pdDocument.addSignature(pdSignature, signatureInterface, options);
 
+			final HashSet<COSDictionary> objectsToWrite = new HashSet<>();
+			if (pdSignatureField != null) {
+				objectsToWrite.add(pdSignatureField.getCOSObject());
+			}
+
 			// the document needs to have an ID, if not the current system time is used, 
 			// and then the digest of the signed data will be different
 			if (pdDocument.getDocumentId() == null) {
 				pdDocument.setDocumentId(parameters.getSigningDate().getTime());
 			}
-			checkEncryptedAndSaveIncrementally(pdDocument, fileOutputStream, parameters);
+			checkEncryptedAndSaveIncrementally(pdDocument, fileOutputStream, parameters, objectsToWrite);
 
 			return digest.digest();
 
@@ -371,13 +377,13 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 	 * @param parameters {@link PAdESCommonParameters}
 	 */
 	public void checkEncryptedAndSaveIncrementally(PDDocument pdDocument, OutputStream outputStream,
-												   PAdESCommonParameters parameters) {
+												   PAdESCommonParameters parameters, final Set<COSDictionary> objectsToWrite) {
 		try {
 			if (pdDocument.isEncrypted()) {
 				SecureRandom secureRandom = getSecureRandomProvider(parameters).getSecureRandom();
 				pdDocument.getEncryption().getSecurityHandler().setCustomSecureRandom(secureRandom);
 			}
-			saveDocumentIncrementally(pdDocument, outputStream);
+			saveDocumentIncrementally(pdDocument, outputStream, objectsToWrite);
 		} catch (IOException e) {
 			throw new DSSException(String.format("Unable to save a document. Reason : %s", e.getMessage()), e);
 		}
@@ -389,9 +395,9 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 	 * @param pdDocument {@link PDDocument} to save
 	 * @param outputStream {@link OutputStream} to save incremental update to
 	 */
-	public void saveDocumentIncrementally(PDDocument pdDocument, OutputStream outputStream) {
+	public void saveDocumentIncrementally(PDDocument pdDocument, OutputStream outputStream, final Set<COSDictionary> objectsToWrite) {
 		try {
-			pdDocument.saveIncremental(outputStream);
+			pdDocument.saveIncremental(outputStream, objectsToWrite);
 		} catch (Exception e) {
 			throw new DSSException(String.format("Unable to save a document. Reason : %s", e.getMessage()), e);
 		}
@@ -417,7 +423,7 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 			}
 			
 			// encryption is not required (no signature/timestamp is added on the step)
-			saveDocumentIncrementally(pdDocument, baos);
+			saveDocumentIncrementally(pdDocument, baos, new HashSet<>());
 
 			DSSDocument inMemoryDocument = new InMemoryDocument(baos.toByteArray());
 			inMemoryDocument.setMimeType(MimeType.PDF);
@@ -600,7 +606,7 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 			for (PDSignatureField pdSignatureField : signatureFields) {
 				PDSignature signature = pdSignatureField.getSignature();
 				if (signature == null) {
-					result.add(pdSignatureField.getPartialName());
+					result.add(pdSignatureField.getFullyQualifiedName());
 				}
 			}
 		} catch (InvalidPasswordException e) {
@@ -667,7 +673,7 @@ public class PdfBoxSignatureService extends AbstractPDFSignatureService {
 			signatureField.getCOSObject().setNeedToBeUpdated(true);
 			page.getCOSObject().setNeedToBeUpdated(true);
 
-			saveDocumentIncrementally(pdfDoc, baos);
+			saveDocumentIncrementally(pdfDoc, baos, new HashSet<>());
 
 			return new InMemoryDocument(baos.toByteArray(), "new-document.pdf", MimeType.PDF);
 
